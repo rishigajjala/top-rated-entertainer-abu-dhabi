@@ -804,15 +804,23 @@
       `;
     }
 
+    function mapsSearchLink(r) {
+      const parts = [r.name, r.outlet, r.address, r.area, 'Abu Dhabi']
+        .map(value => String(value || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      const query = Array.from(new Set(parts)).join(', ');
+      return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+    }
+
     function cardTemplate(r) {
       const outlet = r.outlet || r.area || 'Abu Dhabi';
       const address = r.address || outlet;
       const badge = r.tags || r.category || 'Restaurant';
       const cuisineBadge = (r.cuisines || []).slice(0, 2).join(' / ');
-      const link = r.mapsUrl || r.officialUrl || '#';
-      const target = link === '#' ? '' : ' target="_blank" rel="noopener"';
+      const link = mapsSearchLink(r);
+      const target = ' target="_blank" rel="noopener"';
       return `
-        <a class="restaurant-card" href="${escapeHtml(link)}"${target}>
+        <a class="restaurant-card" href="${escapeHtml(link)}"${target} aria-label="Open ${escapeHtml(r.name)} on Google Maps">
           <div class="card-head">
             <h3 class="name">${escapeHtml(r.name)}</h3>
             <span class="score"><span class="star">&#9733;</span>${Number(r.rating || 0).toFixed(1)} <span>(${formatReviews(r.reviews)})</span></span>
