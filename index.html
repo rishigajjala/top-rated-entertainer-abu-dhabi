@@ -52,7 +52,7 @@
 
     .toolbar {
       display: grid;
-      grid-template-columns: minmax(260px, 1fr) auto auto;
+      grid-template-columns: minmax(260px, 1fr) auto auto auto;
       gap: 12px;
       align-items: center;
       max-width: 1440px;
@@ -555,7 +555,8 @@
     @media (max-width: 1020px) {
       .toolbar { grid-template-columns: minmax(0, 1fr) auto; }
       .clear-btn { grid-column: 2; grid-row: 1; }
-      #sortBy { grid-column: 1 / -1; width: 100%; }
+      #cuisineFilter { grid-column: 1; width: 100%; }
+      #sortBy { grid-column: 2; width: 100%; min-width: 0; }
       .shell { grid-template-columns: 1fr; }
       .side { position: static; }
       .area-list {
@@ -571,7 +572,7 @@
         padding: 10px;
       }
       .clear-btn { min-width: 42px; padding: 0; }
-      #sortBy { grid-column: 1 / -1; min-width: 0; }
+      #cuisineFilter, #sortBy { grid-column: 1 / -1; min-width: 0; }
       .shell { padding: 10px; gap: 10px; }
       .summary { padding: 13px; }
       h1 { font-size: 19px; }
@@ -588,6 +589,9 @@
     <header class="topbar">
       <div class="toolbar">
         <div class="search-wrap"><input id="search" type="search" placeholder="Search restaurants, areas, locations" autocomplete="off"></div>
+        <select id="cuisineFilter" aria-label="Filter by cuisine">
+          <option value="all">All cuisines</option>
+        </select>
         <select id="sortBy" aria-label="Sort restaurants">
           <option value="area">Sort by area distance</option>
           <option value="rating">Sort by rating</option>
@@ -635,10 +639,11 @@
     const restaurants = JSON.parse(document.getElementById('restaurant-data').textContent);
     const areas = JSON.parse(document.getElementById('area-data').textContent);
     const stats = JSON.parse(document.getElementById('stats-data').textContent);
-    const state = { query: '', area: 'all', sortBy: 'area' };
+    const state = { query: '', area: 'all', cuisine: 'all', sortBy: 'area' };
     const els = {
       search: document.getElementById('search'),
       clearSearch: document.getElementById('clearSearch'),
+      cuisineFilter: document.getElementById('cuisineFilter'),
       sortBy: document.getElementById('sortBy'),
       areaList: document.getElementById('areaList'),
       areaStrip: document.getElementById('areaStrip'),
@@ -648,6 +653,12 @@
     };
     const areaByName = new Map(areas.map(area => [area.name, area]));
     const areaOrder = new Map(areas.map((area, index) => [area.name, index]));
+    const cuisineNoise = new Set(['Casual', 'Premium', 'Breakfast', 'Brunch', 'Buffet', 'Set Menu', 'BOGO', 'Informal', 'Light Bites']);
+    const cuisineAliases = new Map([
+      ['BBQ/Grill', 'BBQ / Grill'],
+      ['Hotdog', 'Hot Dog'],
+      ['Indian restaurant', 'Indian']
+    ]);
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>'"]/g, char => ({
@@ -670,14 +681,57 @@
       return Number(value) === 0 ? '0 km' : `${Number(value).toFixed(1)} km`;
     }
 
+    function normalizeCuisine(value) {
+      const trimmed = String(value || '').trim();
+      if (!trimmed || cuisineNoise.has(trimmed)) return '';
+      if (cuisineAliases.has(trimmed)) return cuisineAliases.get(trimmed);
+      return trimmed.replace(/\s+restaurant$/i, '').replace(/\s+cafe$/i, '').replace(/\s+shop$/i, '').trim();
+    }
+
+    function categoryCuisine(category) {
+      const text = String(category || '').toLowerCase();
+      const matches = [
+        ['Indian', 'indian'], ['Italian', 'italian'], ['Chinese', 'chinese'], ['Japanese', 'japanese'],
+        ['Thai', 'thai'], ['Mexican', 'mexican'], ['Lebanese', 'lebanese'], ['Mediterranean', 'mediterranean'],
+        ['American', 'american'], ['French', 'french'], ['Korean', 'korean'], ['Turkish', 'turkish'],
+        ['Greek', 'greek'], ['Barbecue', 'barbecue'], ['Pizza', 'pizza'], ['Burger', 'burger'],
+        ['Coffee', 'coffee'], ['Dessert', 'dessert'], ['Ice Cream', 'ice cream'], ['Cafe', 'cafe'],
+        ['Chicken', 'chicken'], ['Middle Eastern', 'middle eastern']
+      ];
+      return matches.find(([, token]) => text.includes(token))?.[0] || '';
+    }
+
+    function deriveCuisines(r) {
+      const fromTags = String(r.tags || '').split(';').map(normalizeCuisine).filter(Boolean);
+      const fallback = categoryCuisine(r.category);
+      return Array.from(new Set(fromTags.length ? fromTags : [fallback].filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    }
+
+    restaurants.forEach(r => { r.cuisines = deriveCuisines(r); });
+
     function searchHaystack(r) {
-      return [r.name, r.outlet, r.area, r.tags, r.category, r.address].join(' ').toLowerCase();
+      return [r.name, r.outlet, r.area, r.tags, r.category, r.address, ...(r.cuisines || [])].join(' ').toLowerCase();
+    }
+
+    function populateCuisineFilter() {
+      const counts = new Map();
+      restaurants.forEach(r => {
+        (r.cuisines || []).forEach(cuisine => counts.set(cuisine, (counts.get(cuisine) || 0) + 1));
+      });
+      const options = Array.from(counts.entries()).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      options.forEach(([cuisine, count]) => {
+        const option = document.createElement('option');
+        option.value = cuisine;
+        option.textContent = `${cuisine} (${count})`;
+        els.cuisineFilter.append(option);
+      });
     }
 
     function getFiltered() {
       const query = state.query.trim().toLowerCase();
       return restaurants
         .filter(r => state.area === 'all' || r.area === state.area)
+        .filter(r => state.cuisine === 'all' || (r.cuisines || []).includes(state.cuisine))
         .filter(r => !query || searchHaystack(r).includes(query))
         .sort((a, b) => {
           if (state.sortBy === 'rating') return (b.rating || 0) - (a.rating || 0) || (b.reviews || 0) - (a.reviews || 0) || a.name.localeCompare(b.name);
@@ -754,6 +808,7 @@
       const outlet = r.outlet || r.area || 'Abu Dhabi';
       const address = r.address || outlet;
       const badge = r.tags || r.category || 'Restaurant';
+      const cuisineBadge = (r.cuisines || []).slice(0, 2).join(' / ');
       const link = r.mapsUrl || r.officialUrl || '#';
       const target = link === '#' ? '' : ' target="_blank" rel="noopener"';
       return `
@@ -766,6 +821,7 @@
           <p class="address">${escapeHtml(address)}</p>
           <div class="card-footer">
             <span class="badge distance">${visibleDistance(r.distanceFromReemKm)} from Reem</span>
+            ${cuisineBadge ? `<span class="badge">${escapeHtml(cuisineBadge)}</span>` : ''}
             <span class="badge">${escapeHtml(badge)}</span>
           </div>
         </a>
@@ -805,8 +861,10 @@
     }
 
     els.search.addEventListener('input', event => { state.query = event.target.value; render(); });
-    els.clearSearch.addEventListener('click', () => { state.query = ''; state.area = 'all'; els.search.value = ''; render(); els.search.focus(); });
+    els.clearSearch.addEventListener('click', () => { state.query = ''; state.area = 'all'; state.cuisine = 'all'; els.search.value = ''; els.cuisineFilter.value = 'all'; render(); els.search.focus(); });
+    els.cuisineFilter.addEventListener('change', event => { state.cuisine = event.target.value; render(); });
     els.sortBy.addEventListener('change', event => { state.sortBy = event.target.value; render(); });
+    populateCuisineFilter();
     render();
   </script>
 </body>
